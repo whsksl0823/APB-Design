@@ -1,4 +1,4 @@
-
+`timescale 1ns/1ps
 `define tpd 1
 
 module stopwatch(
@@ -18,7 +18,10 @@ parameter STOP = 2;
 parameter LT_STORE = 3;
 parameter RESET = 4;
 
-
+parameter MAX_SUB_SEC = 99;
+parameter MAX_SEC     = 59;
+parameter MAX_MIN     = 59;
+parameter MAX_HOUR    = 99;
 
 reg [1:0] return_ps;
 reg [6:0] sub_sec;
@@ -26,8 +29,27 @@ reg [5:0] sec;
 reg [5:0] min;
 reg [6:0] hour;
 
-// STATE DIAGRAM - NEXT STATE
 
+////////////////////////////////////////////////////////////////////////
+// LAP INPUT
+////////////////////////////////////////////////////////////////////////
+reg   lap_store_d1;
+wire  lap_in;
+
+always@(posedge iPCLK or negedge iRESETn) begin
+    if(!iRESETn) begin
+        lap_store_d1 <= 0;
+    end
+    else begin
+        lap_store_d1 <= lap_store;
+    end
+end
+
+assign lap_in = lap_store & ~lap_store_d1;
+
+////////////////////////////////////////////////////////////////////////
+// STATE DIAGRAM - NEXT STATE
+////////////////////////////////////////////////////////////////////////
 reg     [2:0] curr_state, next_state;
 
 always@(*) begin
@@ -39,14 +61,14 @@ always@(*) begin
 
                 RUN : begin
                         if(stop) next_state <= STOP;
-                        else if(lap_store) next_state <= LT_STORE;
+                        else if(lap_in) next_state <= LT_STORE;
                         else next_state <= RUN;
                 end
 
                 STOP : begin
                         if(reset) next_state <= RESET;
                         else if(start) next_state <= RUN;
-                        else if(lap_store) next_state <= LT_STORE;
+                        else if(lap_in) next_state <= LT_STORE;
                         else next_state <= STOP;
                 end
 
@@ -61,8 +83,14 @@ always@(*) begin
                 default : next_state <= IDLE;
         endcase
 end
+////////////////////////////////////////////////////////////////////////
+// END STATE DIAGRAM
+////////////////////////////////////////////////////////////////////////
 
+
+////////////////////////////////////////////////////////////////////////
 // STATE DIAGRAM - CURRENT STATE
+////////////////////////////////////////////////////////////////////////
 always@(posedge iPCLK or negedge iRESETn) begin
         if(!iRESETn) begin
                 curr_state <= IDLE;
@@ -71,45 +99,71 @@ always@(posedge iPCLK or negedge iRESETn) begin
                 curr_state <= next_state;
         end
 end
+////////////////////////////////////////////////////////////////////////
+// END STATE DIAGRAM - CURRENT STATE
+////////////////////////////////////////////////////////////////////////
+
+
+
 
 ////////////////////////////////////////////////////////////////////////
 // LAP STORE - PREVIOUS STATE
 ////////////////////////////////////////////////////////////////////////
-
 always@(posedge iPCLK or negedge iRESETn) begin
         if(!iRESETn) begin
                 return_ps <= RUN;
         end
         else begin
-                if((curr_state == RUN) & (lap_store)) begin
+                if((curr_state == RUN) & (lap_in)) begin
                         #(`tpd) return_ps <= RUN;
                 end
-                else if((curr_state == STOP) & (lap_store)) begin
+                else if((curr_state == STOP) & (lap_in)) begin
                         #(`tpd) return_ps <= STOP;
                 end
         end
 end
 
+
+
+
+
 ////////////////////////////////////////////////////////////////////////
 // LAP STORE - LAP ADDRESS
 ////////////////////////////////////////////////////////////////////////
-
+reg [3:0] stack;
+always@(posedge iPCLK or negedge iRESETn) begin
+        if(!iRESETn) begin
+                stack <= 0;
+        end
+        else begin
+                if(((curr_state == RUN) | (curr_state == STOP)) & lap_in) begin
+                #(`tpd);
+                        if(stack == 9) begin
+                                stack <= 0;
+                        end
+                        else begin
+                                stack <= stack + 1;
+                        end
+                end
+                else begin
+                        stack <= stack;
+                end
+        end
+end
+////////////////////////////////////////////////////////////////////////
+// LAP STORE - LAP ADDRESS
+////////////////////////////////////////////////////////////////////////
 always@(posedge iPCLK or negedge iRESETn) begin
         if(!iRESETn) begin
                 lap_addr <= 0;
         end
         else begin
-                if(((curr_state == RUN) | (curr_state == STOP)) & lap_store) begin
-                #(`tpd);
-                        if(lap_addr == 9) begin
-                                lap_addr <= 0;
-                        end
-                        else begin
-                                lap_addr <= lap_addr + 1;
-                        end
+                if(((curr_state == RUN) | (curr_state == STOP)) & lap_in) begin
+                    #(`tpd);
+                    lap_addr <= stack;
                 end
                 else begin
-                        lap_addr <= lap_addr;
+                    lap_addr <= lap_addr;
                 end
         end
 end
@@ -119,13 +173,12 @@ end
 // LAP SOTRE - LAP SOTRE
 ////////////////////////////////////////////////////////////////////////
 
-
 always@(posedge iPCLK or negedge iRESETn) begin
         if(!iRESETn) begin
                 lap <= 0;
         end
         else begin
-                if(((curr_state == RUN) | (curr_state == STOP)) & lap_store) begin
+                if(((curr_state == RUN) | (curr_state == STOP)) & lap_in) begin
                         #(`tpd) lap <= {hour, min, sec, sub_sec};
                 end
                 else begin
@@ -133,7 +186,6 @@ always@(posedge iPCLK or negedge iRESETn) begin
                 end
         end
 end
-
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -154,7 +206,7 @@ always@(posedge iPCLK or negedge iRESETn) begin
                         if(gen_10ms) begin
                                 if((curr_state == RUN) | (curr_state == LT_STORE)) begin
                                       	 #(`tpd);
-                                        if(sub_sec == 99) begin
+                                        if(sub_sec == MAX_SUB_SEC) begin
                                                 sub_sec <= 0;
                                         end
                                         else begin
@@ -185,9 +237,9 @@ always@(posedge iPCLK or negedge iRESETn) begin
                 end
                 else begin
                         if(gen_10ms) begin
-                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & sub_sec == 99) begin
+                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & sub_sec == MAX_SUB_SEC) begin
                                         #(`tpd);
-                                        if(sec == 59) begin
+                                        if(sec == MAX_SEC) begin
                                                 sec <= 0;
                                         end
                                         else begin
@@ -218,9 +270,9 @@ always@(posedge iPCLK or negedge iRESETn) begin
                 end
                 else begin
                         if(gen_10ms) begin
-                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & (sec == 59) & (sub_sec == 99)) begin
+                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & (sec == MAX_SEC) & (sub_sec == MAX_SUB_SEC)) begin
                                         #(`tpd);
-                                        if(min == 59) begin
+                                        if(min == MAX_MIN) begin
                                                 min <= 0;
                                         end
                                         else begin
@@ -252,9 +304,9 @@ always@(posedge iPCLK or negedge iRESETn) begin
                 end
                 else begin
                         if(gen_10ms) begin
-                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & (min ==59) & (sec == 59) & (sub_sec == 99)) begin
+                                if(((curr_state == RUN) | (curr_state == LT_STORE)) & (min ==MAX_MIN) & (sec == MAX_SEC) & (sub_sec == MAX_SUB_SEC)) begin
                                         #(`tpd);
-                                        if(hour == 99) begin
+                                        if(hour == MAX_HOUR) begin
                                                 hour <= 0;
                                         end
                                         else begin
